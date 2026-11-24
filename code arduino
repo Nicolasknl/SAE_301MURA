@@ -1,0 +1,109 @@
+#include <ESP8266WiFi.h>
+#include <PubSubClient.h>
+
+const char* ssid = "yame";
+const char* password = "123456789";
+
+const char* mqtt_server = "172.20.10.14";
+const char* topicCommande = "sae/prise1/commande"; 
+const char* topicEtat     = "sae/prise1/etat";    
+
+const int ledPin = 12;
+const int buttonPin = 13;
+
+bool etatPrise = false;
+int dernierEtatBouton = HIGH;
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+void setup_wifi() {
+  delay(10);
+  Serial.print("Connexion au Wi-Fi : ");
+  Serial.println(ssid);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.print("\nWi-Fi connecté ! IP : ");
+  Serial.println(WiFi.localIP());
+}
+
+void callback(char* topic, byte* payload, unsigned int length) {
+  String message = "";
+  for (unsigned int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
+
+  Serial.print("Message reçu [");
+  Serial.print(topic);
+  Serial.print("] : ");
+  Serial.println(message);
+
+  if (message == "ON") {
+    etatPrise = true;
+    digitalWrite(ledPin, HIGH);
+    client.publish(topicEtat, "ON");
+  } else if (message == "OFF") {
+    etatPrise = false;
+    digitalWrite(ledPin, LOW);
+    client.publish(topicEtat, "OFF");
+  }
+}
+
+void reconnect() {
+  while (!client.connected()) {
+    Serial.print("Connexion au broker MQTT...");
+    String clientId = "FeatherESP8266-" + String(ESP.getChipId(), HEX);
+
+    if (client.connect(clientId.c_str())) {
+      Serial.println(" connecté !");
+      client.subscribe(topicCommande);
+      client.publish(topicEtat, etatPrise ? "ON" : "OFF");
+    } else {
+      Serial.print(" échec (code=");
+      Serial.print(client.state());
+      Serial.println("), nouvel essai dans 5s...");
+      delay(5000);
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(ledPin, OUTPUT);
+  pinMode(buttonPin, INPUT_PULLUP);
+  digitalWrite(ledPin, LOW);
+
+  setup_wifi();
+  client.setServer(mqtt_server, 1883);
+  client.setCallback(callback);
+}
+
+void loop() {
+  if (!client.connected()) {
+    reconnect();
+  }
+  client.loop(); 
+
+  int etatBouton = digitalRead(buttonPin);
+
+  if (dernierEtatBouton == HIGH && etatBouton == LOW) {
+    etatPrise = !etatPrise;
+    digitalWrite(ledPin, etatPrise ? HIGH : LOW);
+
+    const char* nouvelEtat = etatPrise ? "ON" : "OFF";
+    client.publish(topicEtat, nouvelEtat);
+    Serial.print("Bouton pressé -> État publié : ");
+    Serial.println(nouvelEtat);
+
+    delay(50);
+  }
+
+  dernierEtatBouton = etatBouton;
+}
